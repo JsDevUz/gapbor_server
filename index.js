@@ -75,7 +75,7 @@ try {
 const io = require("socket.io")(server, {
   pingTimeOut: 60000,
   cors: {
-    origin: ["http://gapbor.jsdev.uz","https://gapbor-server.onrender.com", "http://localhost:3000","http://192.168.100.253:3000","192.168.100.253:3000"],
+    origin: ["http://gapbor.jsdev.uz","https://gapbor-frontend.vercel.app", "http://localhost:3000","http://192.168.100.253:3000","192.168.100.253:3000"],
   },
 });
 let onlineUsers = [];
