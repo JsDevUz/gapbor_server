@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const { decodeJWT } = require("../lib");
 const { get } = require("lodash");
 const { default: mongoose } = require("mongoose");
+const bcrypt = require("bcryptjs");
 require("dotenv").config();
 const ObjectId = mongoose.Types.ObjectId;
 const { messageModel } = require("../models/message.model");
@@ -88,4 +89,114 @@ async function loginOrSignUp({ email, pic, name }, socket, callBack) {
     callBack({ isOk: false, message: "444" });
   }
 }
-module.exports = { getMe, loginOrSignUp };
+
+// Email va password bilan register
+async function register(req, res) {
+  try {
+    const { email, password, fullName } = req.body;
+
+    // Tekshirish: user allaqachon borligini
+    const existingUser = await UserModel.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ 
+        isOk: false, 
+        message: "Bu email allaqachon ro'yxatdan o'tgan" 
+      });
+    }
+
+    // Passwordni hash qilish
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Yangi user yaratish
+    const newUser = new UserModel({
+      email,
+      password: hashedPassword,
+      fullName: fullName || email.split('@')[0],
+      friends: [new ObjectId(process.env.GAP_BOR_SEO_ID)],
+    });
+
+    await newUser.save();
+
+    // Token yaratish
+    const token = jwt.sign(
+      { userId: get(newUser, "_id") },
+      process.env.ACCESS_TOKEN_SECRET,
+      { expiresIn: "1d" }
+    );
+
+    // Gap bor SEO ID ga qo'shish
+    await UserModel.findOneAndUpdate(
+      { _id: new ObjectId(process.env.GAP_BOR_SEO_ID) },
+      { $push: { friends: get(newUser, "_id") } }
+    );
+
+    // Welcome message
+    const newMessage = new messageModel({
+      sender: new ObjectId(process.env.GAP_BOR_SEO_ID),
+      content: "Xush kelibsiz!",
+      sender_type: "user",
+      chat: get(newUser, "_id"),
+    });
+    await newMessage.save();
+
+    res.status(201).json({
+      isOk: true,
+      token,
+      user: newUser
+    });
+
+  } catch (error) {
+    console.error("Register error:", error);
+    res.status(500).json({ 
+      isOk: false, 
+      message: "Server xatoligi" 
+    });
+  }
+}
+
+// Email va password bilan login
+async function login(req, res) {
+  try {
+    const { email, password } = req.body;
+
+    // User ni topish
+    const user = await UserModel.findOne({ email });
+    if (!user || !user.password) {
+      return res.status(400).json({ 
+        isOk: false, 
+        message: "Email yoki parol noto'g'ri" 
+      });
+    }
+
+    // Passwordni tekshirish
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(400).json({ 
+        isOk: false, 
+        message: "Email yoki parol noto'g'ri" 
+      });
+    }
+
+    // Token yaratish
+    const token = jwt.sign(
+      { userId: get(user, "_id") },
+      process.env.ACCESS_TOKEN_SECRET,
+      { expiresIn: "1d" }
+    );
+
+    res.json({
+      isOk: true,
+      token,
+      user
+    });
+
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ 
+      isOk: false, 
+      message: "Server xatoligi" 
+    });
+  }
+}
+module.exports = { getMe, loginOrSignUp, register, login };

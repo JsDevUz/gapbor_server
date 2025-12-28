@@ -5,6 +5,8 @@ const { notfound } = require("./routes/404");
 const cors = require("cors");
 const { authRouter } = require("./routes/auth.router");
 const fileupload = require("express-fileupload");
+const fs = require('fs');
+const https = require('https');
 
 const corsOptions = require("./config/corsOptions");
 const credentials = require("./middlewares/credentials");
@@ -55,10 +57,25 @@ app.use(function (err, req, res, next) {
 });
 const server = app.listen(5001, connectDb);
 
+// HTTPS server uchun SSL certificate
+try {
+  const privateKey = fs.readFileSync('localhost-key.pem', 'utf8');
+  const certificate = fs.readFileSync('localhost.pem', 'utf8');
+  
+  const credentials = { key: privateKey, cert: certificate };
+  const httpsServer = https.createServer(credentials, app);
+  
+  httpsServer.listen(5443, () => {
+    console.log('HTTPS Server running on port 5443');
+  });
+} catch (error) {
+  console.log('SSL certificate topilmadi, faqat HTTP ishlayapti');
+}
+
 const io = require("socket.io")(server, {
   pingTimeOut: 60000,
   cors: {
-    origin: ["http://gapbor.jsdev.uz", "http://localhost:3000"],
+    origin: ["http://gapbor.jsdev.uz", "http://localhost:3000","http://192.168.100.253:3000","192.168.100.253:3000"],
   },
 });
 let onlineUsers = [];
