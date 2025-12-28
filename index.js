@@ -5,8 +5,8 @@ const { notfound } = require("./routes/404");
 const cors = require("cors");
 const { authRouter } = require("./routes/auth.router");
 const fileupload = require("express-fileupload");
-const fs = require('fs');
-const https = require('https');
+const fs = require("fs");
+const https = require("https");
 
 const corsOptions = require("./config/corsOptions");
 const credentials = require("./middlewares/credentials");
@@ -41,15 +41,17 @@ app.use("/api/getFile", fileRouter);
 app.use("*", notfound);
 
 process.on("unhandledRejection", (ex) => {
-  console.log(ex, "uhr");
+  console.error("Unhandled Rejection:", ex);
   process.exit(1);
 });
+
 process.on("uncaughtException", (ex) => {
-  console.log(ex, "unce");
+  console.error("Uncaught Exception:", ex);
   process.exit(1);
 });
+
 app.use(function (err, req, res, next) {
-  console.log(err, "un");
+  console.error("Error:", err);
   res.status(500).send({
     message: "SERVER ERROR",
     type: "global",
@@ -59,23 +61,29 @@ const server = app.listen(5001, connectDb);
 
 // HTTPS server uchun SSL certificate
 try {
-  const privateKey = fs.readFileSync('localhost-key.pem', 'utf8');
-  const certificate = fs.readFileSync('localhost.pem', 'utf8');
-  
+  const privateKey = fs.readFileSync("localhost-key.pem", "utf8");
+  const certificate = fs.readFileSync("localhost.pem", "utf8");
+
   const credentials = { key: privateKey, cert: certificate };
   const httpsServer = https.createServer(credentials, app);
-  
+
   httpsServer.listen(5443, () => {
-    console.log('HTTPS Server running on port 5443');
+    console.log("HTTPS Server running on port 5443");
   });
 } catch (error) {
-  console.log('SSL certificate topilmadi, faqat HTTP ishlayapti');
+  console.log("SSL certificate topilmadi, faqat HTTP ishlayapti");
 }
 
 const io = require("socket.io")(server, {
   pingTimeOut: 60000,
   cors: {
-    origin: ["http://gapbor.jsdev.uz","https://gapbor-frontend.vercel.app", "http://localhost:3000","http://192.168.100.253:3000","192.168.100.253:3000"],
+    origin: [
+      "http://gapbor.jsdev.uz",
+      "https://gapbor-frontend.vercel.app",
+      "http://localhost:3000",
+      "http://192.168.100.253:3000",
+      "192.168.100.253:3000",
+    ],
   },
 });
 let onlineUsers = [];
@@ -84,24 +92,25 @@ io.on("connection", (socket) => {
   socket.on("user:connected", async (userData, callBack) => {
     socket.join(userData);
     socket.userId = userData;
-    
+
     // Avvalgi shu foydalanuvchining eski socket ID sini o'chirish
     onlineUsers = onlineUsers.filter((u) => u.userId !== userData);
-    
+
     // Yangi socket ID ni qo'shish
     onlineUsers.push({ userId: userData, socketId: socket.id });
-    
-    console.log(socket.id,'ulandi', 'user:', userData);
-    console.log('onlineUsers:', onlineUsers);
-    
-    callBack({ onlineUsers });
+
+    if (callBack) callBack({ onlineUsers });
     io.emit("new:onlineUser", userData);
   });
   socket.on("connection_error", (err) => {
-    console.log(err);
+    console.error("Connection error:", err);
   });
-  socket.on("disconnect", async (resons) => {
-    io.emit("user:disconnected", socket.userId);
+
+  socket.on("disconnect", async () => {
+    if (socket.userId) {
+      onlineUsers = onlineUsers.filter((u) => u.userId !== socket.userId);
+      io.emit("user:disconnected", socket.userId);
+    }
   });
   socket.on("loginOrSignup", async (data, callBack) => {
     loginOrSignUp(data, socket, callBack);
@@ -291,80 +300,123 @@ io.on("connection", (socket) => {
     );
   });
 
+  // Helper function for WebRTC call events
+  const findReceiverSocket = (receiverId) => {
+    return onlineUsers.find((u) => u.userId === receiverId);
+  };
+
+  const sendCallEvent = (socketId, event, data, callBack) => {
+    io.to(socketId).emit(event, data);
+    if (typeof callBack === "function") {
+      callBack({ isOk: true });
+    }
+  };
+
+  const sendCallError = (callBack, message = "User not found") => {
+    if (typeof callBack === "function") {
+      callBack({ isOk: false, message });
+    }
+  };
+
   // WebRTC Video Call Events
   socket.on("call:initiate", async (data, callBack) => {
-    const { callerId, receiverId } = data;
-    console.info('call:initiate yetib keldi serverga',onlineUsers)
-    const receiverSocket = onlineUsers.find(u => u.userId === receiverId);
+    const { receiverId } = data;
+    const receiverSocket = findReceiverSocket(receiverId);
+
     if (receiverSocket) {
-      console.info('call:incoming yuborilmoqda',receiverSocket.socketId,'ga');
-      
-      io.to(receiverSocket.socketId).emit("call:incoming", {
-        callerId,
-        callerName: data.callerName,
-        callerPic: data.callerPic,
-        callId: data.callId
-      });
-      if (callBack) callBack({ isOk: true, message: "Call initiated" });
+      sendCallEvent(
+        receiverSocket.socketId,
+        "call:incoming",
+        {
+          callerId: data.callerId,
+          callerName: data.callerName,
+          callerPic: data.callerPic,
+          callId: data.callId,
+        },
+        callBack
+      );
     } else {
-      if (callBack) callBack({ isOk: false, message: "User not online" });
+      sendCallError(callBack, "User not online");
     }
   });
 
   socket.on("call:answer", async (data, callBack) => {
     const { receiverId, callId, answer } = data;
-    const receiverSocket = onlineUsers.find(u => u.userId === receiverId);
+    const receiverSocket = findReceiverSocket(receiverId);
+
     if (receiverSocket) {
-      io.to(receiverSocket.socketId).emit("call:answered", { callId, answer });
-      if (callBack) callBack({ isOk: true });
+      sendCallEvent(
+        receiverSocket.socketId,
+        "call:answered",
+        { callId, answer },
+        callBack
+      );
     } else {
-      if (callBack) callBack({ isOk: false, message: "User not found" });
+      sendCallError(callBack);
     }
   });
-// log
+
   socket.on("call:offer", async (data, callBack) => {
     const { receiverId, callId, offer } = data;
-    
-    const receiverSocket = onlineUsers.find(u => u.userId === receiverId);
-    console.log(data,receiverSocket,'qabul qilmoqchi',callBack);
+    const receiverSocket = findReceiverSocket(receiverId);
+
     if (receiverSocket) {
-      io.to(receiverSocket.socketId).emit("call:offer-received", { callId, offer });
-      if (typeof callBack === 'function') callBack({ isOk: true });
+      sendCallEvent(
+        receiverSocket.socketId,
+        "call:offer-received",
+        { callId, offer },
+        callBack
+      );
     } else {
-      if (typeof callBack === 'function') callBack({ isOk: false, message: "User not found" });
+      sendCallError(callBack);
     }
   });
 
   socket.on("call:ice-candidate", async (data, callBack) => {
     const { receiverId, callId, candidate } = data;
-    const receiverSocket = onlineUsers.find(u => u.userId === receiverId);
+    const receiverSocket = findReceiverSocket(receiverId);
+
     if (receiverSocket) {
-      io.to(receiverSocket.socketId).emit("call:ice-candidate", { callId, candidate });
-      if (typeof callBack === 'function') callBack({ isOk: true });
+      sendCallEvent(
+        receiverSocket.socketId,
+        "call:ice-candidate",
+        { callId, candidate },
+        callBack
+      );
     } else {
-      if (typeof callBack === 'function') callBack({ isOk: false, message: "User not found" });
+      sendCallError(callBack);
     }
   });
 
   socket.on("call:end", async (data, callBack) => {
     const { receiverId, callId } = data;
-    const receiverSocket = onlineUsers.find(u => u.userId === receiverId);
+    const receiverSocket = findReceiverSocket(receiverId);
+
     if (receiverSocket) {
-      io.to(receiverSocket.socketId).emit("call:ended", { callId });
-      if (typeof callBack === 'function') callBack({ isOk: true });
+      sendCallEvent(
+        receiverSocket.socketId,
+        "call:ended",
+        { callId },
+        callBack
+      );
     } else {
-      if (typeof callBack === 'function') callBack({ isOk: false, message: "User not found" });
+      sendCallError(callBack);
     }
   });
 
   socket.on("call:reject", async (data, callBack) => {
     const { receiverId, callId } = data;
-    const receiverSocket = onlineUsers.find(u => u.userId === receiverId);
+    const receiverSocket = findReceiverSocket(receiverId);
+
     if (receiverSocket) {
-      io.to(receiverSocket.socketId).emit("call:rejected", { callId });
-      if (typeof callBack === 'function') callBack({ isOk: true });
+      sendCallEvent(
+        receiverSocket.socketId,
+        "call:rejected",
+        { callId },
+        callBack
+      );
     } else {
-      if (typeof callBack === 'function') callBack({ isOk: false, message: "User not found" });
+      sendCallError(callBack);
     }
   });
 });
