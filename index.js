@@ -112,6 +112,19 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", async () => {
     if (socket.userId) {
+      console.log('User disconnected:', socket.userId);
+
+      // Barcha meet roomlardan chiqarish va boshqa participantlarga xabar berish
+      const rooms = Array.from(socket.rooms).filter(room => room.startsWith('meet:'));
+      rooms.forEach(room => {
+        const meetId = room.replace('meet:', '');
+        console.log(`Notifying meet ${meetId} that user ${socket.userId} left`);
+        socket.to(room).emit("meet:user-left", {
+          meetId,
+          userId: socket.userId
+        });
+      });
+
       onlineUsers = onlineUsers.filter((u) => u.userId !== socket.userId);
       io.emit("user:disconnected", socket.userId);
     }
@@ -435,7 +448,7 @@ io.on("connection", (socket) => {
       async (res) => {
         try {
           const Meet = require("./models/Meet");
-          const User = require("./models/user.model")
+          const { UserModel: User } = require("./models/user.model");
           const { v4: uuidv4 } = require("uuid");
 
           const meetId = uuidv4().slice(0, 8);
@@ -450,7 +463,7 @@ io.on("connection", (socket) => {
           });
 
           await meet.save();
-          const creator = await UserModel.findById(userId).select('fullName pic');
+          const creator = await User.findById(userId).select('fullName pic');
           
           // Meet roomiga creator ni qo'shish
           socket.join(`meet:${meetId}`);
@@ -489,7 +502,7 @@ io.on("connection", (socket) => {
       async (res) => {
         try {
           const Meet = require("./models/Meet");
-          const User = require("./models/user.model");
+          const { UserModel: User } = require("./models/user.model");;
 
           const meet = await Meet.findOne({ meetId, isActive: true })
             .populate('creator', 'fullName pic')
@@ -500,7 +513,7 @@ io.on("connection", (socket) => {
             return callBack({ isOk: false, message: "Meet topilmadi" });
           }
 
-          const user = await UserModel.findById(userId).select('fullName pic');
+          const user = await User.findById(userId).select('fullName pic');
           console.log('User found:', user?.fullName);
           
           // Creator ga join request yuborish
@@ -581,8 +594,8 @@ io.on("connection", (socket) => {
           }
 userSocket.join(`meet:${meetId}`);
           // Barcha participantlarga yangi user haqida xabar
-          const User = require("./models/user.model");
-          const newUser = await UserModel.findById(userId).select('fullName pic');
+          const { UserModel: User } = require("./models/user.model");;
+          const newUser = await User.findById(userId).select('fullName pic');
           io.to(`meet:${meetId}`).emit("meet:user-joined", {
             meetId,
   user: newUser,
@@ -604,12 +617,57 @@ userSocket.join(`meet:${meetId}`);
   socket.on("meet:join-room", async (data, callBack) => {
     const { meetId, userId } = data;
     console.log('meet:join-room received:', { meetId, userId, socketId: socket.id });
-    
-    // Socketni meet roomiga qo'shish
-    socket.join(`meet:${meetId}`);
-    console.log('Socket joined meet room:', meetId);
-    
-    if (callBack) callBack({ isOk: true });
+
+    try {
+      const Meet = require("./models/Meet");
+      const { UserModel } = require("./models/user.model");
+
+      // Meetni topish
+      const meet = await Meet.findOne({ meetId, isActive: true })
+        .populate('participants', 'fullName pic _id');
+
+      console.log('Meet found:', !!meet, 'meetId:', meetId, 'participants count:', meet?.participants?.length || 0);
+      if (meet?.participants) {
+        console.log('Participants:', meet.participants.map(p => ({ id: p._id, name: p.fullName })));
+      }
+
+      if (!meet) {
+        console.log('Meet not found for join-room:', meetId);
+        if (callBack) callBack({ isOk: false, message: "Meet topilmadi" });
+        return;
+      }
+
+      // Socketni meet roomiga qo'shish
+      socket.join(`meet:${meetId}`);
+      console.log('Socket joined meet room:', meetId);
+
+      // Qolgan participantlarga bu user qayta qo'shilganini xabar berish
+      const currentUser = await UserModel.findById(userId).select('fullName pic _id');
+      socket.to(`meet:${meetId}`).emit("meet:user-joined", {
+        meetId,
+        user: currentUser,
+        userId: currentUser._id
+      });
+
+      // Yangi qo'shilgan userga mavjud participantlar haqida xabar berish
+      const existingParticipants = meet.participants.filter(p => p._id.toString() !== userId);
+      console.log(`Sending ${existingParticipants.length} existing participants to user ${userId}`);
+      existingParticipants.forEach((participant, index) => {
+        console.log(`Sending meet:user-joined for participant ${index + 1}:`, participant._id);
+        socket.emit("meet:user-joined", {
+          meetId,
+          user: participant,
+          userId: participant._id
+        });
+      });
+
+      console.log(`User ${userId} rejoined meet ${meetId} with ${existingParticipants.length} existing participants`);
+
+      if (callBack) callBack({ isOk: true });
+    } catch (error) {
+      console.error('meet:join-room error:', error);
+      if (callBack) callBack({ isOk: false, message: "Join room error" });
+    }
   });
 
   // WebRTC signaling handlers
