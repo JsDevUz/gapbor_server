@@ -663,7 +663,11 @@ userSocket.join(`meet:${meetId}`);
 
       console.log(`User ${userId} rejoined meet ${meetId} with ${existingParticipants.length} existing participants`);
 
-      if (callBack) callBack({ isOk: true });
+      // Check if current user is the creator
+      const isCreator = meet.creator.toString() === userId;
+      console.log(`User ${userId} is creator: ${isCreator} (meet creator: ${meet.creator})`);
+
+      if (callBack) callBack({ isOk: true, isCreator });
     } catch (error) {
       console.error('meet:join-room error:', error);
       if (callBack) callBack({ isOk: false, message: "Join room error" });
